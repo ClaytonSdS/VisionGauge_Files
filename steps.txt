@@ -1,0 +1,4 @@
+Separar em três labels:
+* background
+* hose
+* liquid-level

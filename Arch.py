@@ -1,0 +1,486 @@
+# Arch.py
+import torch
+import torch.nn as nn
+import cv2
+import numpy as np
+from torchvision import transforms, models
+from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
+
+import os
+import torch
+from torch import nn
+from datetime import datetime
+from torchvision import models
+
+import os
+import torch
+from torch import nn
+from datetime import datetime
+from torchvision import models
+import albumentations as A
+import numpy as np
+from albumentations.pytorch import ToTensorV2   
+
+import torchvision.transforms.functional as F
+import albumentations as A
+import cv2
+
+
+class BilateralFilter(A.ImageOnlyTransform):
+    def __init__(self, diameter=5, sigma_color=30, sigma_space=30, always_apply=False, p=1.0):
+        super(BilateralFilter, self).__init__(always_apply, p)
+        self.diameter = diameter
+        self.sigma_color = sigma_color
+        self.sigma_space = sigma_space
+
+    def apply(self, img, **params):
+        return cv2.bilateralFilter(img, self.diameter, self.sigma_color, self.sigma_space)
+
+
+Transform = A.Compose([
+            #A.CLAHE(clip_limit=(2, 2), p=1.0),
+            #A.CLAHE(clip_limit=(2, 2), always_apply=True, p=1.0),
+            A.Resize(120, 120),
+            #A.MedianBlur(blur_limit=3, p=1.0),
+            BilateralFilter(
+                diameter=3,
+                sigma_color=30,
+                sigma_space=30,
+                p=1.0
+            ),
+
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
+Transform_ViT = A.Compose([
+            #A.CLAHE(clip_limit=(2, 2), always_apply=True, p=1.0),
+            A.Resize(224, 224),
+            #A.MedianBlur(blur_limit=3, p=1.0),
+            #BilateralFilter(diameter=3,sigma_color=30,sigma_space=30,p=1.0),
+
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
+
+
+class ViT_Inference(nn.Module):
+    def __init__(self, backbone_name: str = "vit_b_16",  transform=Transform_ViT, debug: bool = False):
+        super().__init__()
+
+        self.model_name = backbone_name.lower()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.debug = debug
+
+        # será substituído pelo metadata do checkpoint
+        self.use_head = False
+        self.image_size = (224, 224)
+
+        # Transform padrão do ViT
+        self.transform = transform
+
+        self.to(self.device)
+
+    # ---------------------------------------------------------
+    # Head MLP (mesmo do treino)
+    # ---------------------------------------------------------
+    def build_head(self, output_features):
+        self.head = nn.Sequential(
+            nn.Linear(output_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(128, 1),
+        )
+
+        # Em inferência → tudo congelado
+        for p in self.head.parameters():
+            p.requires_grad = False
+
+        if self.debug:
+            print(f"[Inference] Head criada ({output_features} → 256 → 128 → 1)")
+
+    # ---------------------------------------------------------
+    # Forward
+    # ---------------------------------------------------------
+    def forward(self, x):
+        x = x.to(self.device)
+
+        if hasattr(self, "head") and self.use_head:
+            feats = self.backbone(x)
+            return self.head(feats)
+        else:
+            return self.backbone(x)
+
+    # ---------------------------------------------------------
+    # Load backbone ViT
+    # ---------------------------------------------------------
+    def load_backbone(self):
+        name = self.model_name
+
+        if name in ("vit", "vit_b16", "vit_b_16"):
+            m = models.vit_b_16(weights=None)
+        elif name == "vit_b_32":
+            m = models.vit_b_32(weights=None)
+        elif name == "vit_l_16":
+            m = models.vit_l_16(weights=None)
+        elif name == "vit_l_32":
+            m = models.vit_l_32(weights=None)
+        else:
+            raise ValueError(f"Backbone ViT inválido: {self.model_name}")
+
+        out_feats = m.hidden_dim
+        self.image_size = (224, 224)
+
+        if self.use_head:
+            m.heads = nn.Identity()
+            self.build_head(output_features=out_feats)
+        else:
+            m.heads = nn.Linear(out_feats, 1)
+
+        # Inferência → congelar tudo
+        for p in m.parameters():
+            p.requires_grad = False
+
+        self.backbone = m
+
+    # ---------------------------------------------------------
+    # Load checkpoint compatível com NewDirectModel
+    # ---------------------------------------------------------
+    def load_model(self, path_or_ckpt):
+        if isinstance(path_or_ckpt, str):
+            ckpt = torch.load(path_or_ckpt, map_location=self.device)
+        else:
+            ckpt = path_or_ckpt
+
+        meta = ckpt.get("metadata", {})
+
+        self.model_name = meta.get("backbone_name", self.model_name)
+        self.use_head   = meta.get("use_head", False)
+
+        # recriar arquitetura EXATAMENTE igual ao treino
+        self.load_backbone()
+
+        # carregar pesos
+        state = ckpt.get("model_state", None)
+        if state is None:
+            raise ValueError("Checkpoint sem 'model_state'")
+
+        missing, unexpected = self.load_state_dict(state, strict=False)
+
+        if self.debug:
+            print("[Inference] Missing keys:", missing)
+            print("[Inference] Unexpected keys:", unexpected)
+
+        self.eval()
+        self.to(self.device)
+        return self
+
+    # ---------------------------------------------------------
+    # Predict helper
+    # ---------------------------------------------------------
+    def predict(self, imgs):
+
+        if isinstance(imgs, np.ndarray):
+            imgs = [imgs]
+
+        batch = []
+
+        for img in imgs:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            tensor = self.transform(image=img_rgb)["image"]
+            batch.append(tensor)
+
+        batch = torch.stack(batch).to(self.device)
+
+        self.eval()
+        self.backbone.eval()
+
+        with torch.no_grad():
+            preds_r1 = self.forward(batch).squeeze(1).cpu().numpy()
+
+        # =======================================================
+        # APLICANDO EMA - Suavização Temporal
+        # =======================================================
+        # Se for batch > 1, aplico suavização em cada item
+        if preds_r1.ndim == 1:
+
+            smoothed = []
+            for p in preds_r1:
+
+                if not hasattr(self, "prev_height"):
+                    self.prev_height = p   # inicializa
+
+                p_smooth = 0.7 * self.prev_height + 0.3 * p
+                self.prev_height = p_smooth
+
+                smoothed.append(p_smooth)
+
+            preds_r1 = np.array(smoothed)
+
+        else:
+            # Caso raro: single-value array
+            p = preds_r1.item()
+            if not hasattr(self, "prev_height"):
+                self.prev_height = p
+            preds_r1 = 0.7 * self.prev_height + 0.3 * p
+            self.prev_height = preds_r1
+            preds_r1 = np.array([preds_r1])
+        # =======================================================
+
+        return preds_r1
+
+class NewDirectModel_Inference(nn.Module):
+    def __init__(self, backbone_name: str, transform = Transform, input_dim: int = 3, unfreeze_all: bool = False, debug: bool = False):
+        super().__init__()
+        self.model_name = backbone_name
+        self.input_dim = input_dim
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.debug = debug
+
+        self.use_head = False 
+        self.unfreeze_all = unfreeze_all
+        self.image_size = (224, 224)
+
+        # Transformações (determinísticas)
+        self.transform = transform
+
+        self.to(self.device)
+
+
+
+    # ---------------------------------------------------------
+    # HEAD MLP
+    # ---------------------------------------------------------
+    def build_head(self, output_features):
+        self.head = nn.Sequential(
+            nn.Linear(output_features, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(128, 1),
+        )
+
+
+    # ---------------------------------------------------------
+    # FORWARD
+    # ---------------------------------------------------------
+    def forward(self, x):
+        x = x.to(self.device)
+
+        # ---- PRINTS DE DEBUG ----ww
+        #print("Model mode:", self.training)
+        #print("Backbone mode:", self.backbone.training)
+        # --------------------------
+
+        if hasattr(self, "head") and self.head is not None:
+            feats = self.backbone(x)
+            return self.head(feats)
+
+        return self.backbone(x)
+
+
+
+    # ---------------------------------------------------------
+    # LOAD MODEL COMPLETO
+    # ---------------------------------------------------------
+    def load_model(self, path_or_ckpt):
+        if isinstance(path_or_ckpt, str):
+            ckpt = torch.load(path_or_ckpt, map_location=self.device)
+        else:
+            ckpt = path_or_ckpt
+
+        meta = ckpt.get("metadata", {})
+        self.model_name = meta.get("backbone_name", self.model_name)
+        self.use_head = meta.get("use_head", False)
+
+        # Recria a arquitetura exatamente igual do treino
+        self.load_backbone()
+
+        # Carrega pesos
+        state = ckpt.get("model_state", None)
+        if state is None:
+            raise ValueError("Checkpoint sem 'model_state'")
+
+        self.load_state_dict(state, strict=False)
+
+        self.to(self.device)
+        self.eval()              # desativa dropout + batchnorm
+        self.backbone.eval()     # garante que o backbone está em eval
+        # ---------------------------------
+
+        return self
+
+
+
+    # ---------------------------------------------------------
+    # CONSTRUIR BACKBONE
+    # ---------------------------------------------------------
+    def load_backbone(self):
+        name = self.model_name.lower()
+
+        # ------------------- RESNET18 -------------------
+        if name in ("resnet", "resnet18"):
+            m = models.resnet18(weights=None)
+
+            out_feats = m.fc.in_features
+
+            if self.use_head:
+                m.fc = nn.Identity()
+                self.build_head(out_feats)
+            else:
+                m.fc = nn.Linear(out_feats, 1)
+
+            self.backbone = m
+
+        # ------------------- EFFICIENTNET -------------------
+        elif name in ("efficientnet_lite", "efficientnet_b0"):
+            m = models.efficientnet_b0(weights=None)
+
+            out_feats = m.classifier[1].in_features
+
+            if self.use_head:
+                m.classifier[1] = nn.Identity()
+                self.build_head(out_feats)
+            else:
+                m.classifier[1] = nn.Linear(out_feats, 1)
+
+            self.backbone = m
+
+        else:
+            raise ValueError(f"Backbone '{self.model_name}' inválido.")
+
+
+
+    # ---------------------------------------------------------
+    # PREDICT EM BATCH
+    # ---------------------------------------------------------
+    def predict(self, imgs):
+
+        if isinstance(imgs, np.ndarray):
+            imgs = [imgs]
+
+        batch = []
+
+        for img in imgs:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            tensor = self.transform(image=img_rgb)["image"]
+            batch.append(tensor)
+
+        batch = torch.stack(batch).to(self.device)
+
+        self.eval()
+        self.backbone.eval()
+
+        with torch.no_grad():
+            preds_r1 = self.forward(batch).squeeze(1).cpu().numpy()
+
+        # =======================================================
+        # APLICANDO EMA - Suavização Temporal
+        # =======================================================
+        # Se for batch > 1, aplico suavização em cada item
+        if preds_r1.ndim == 1:
+
+            smoothed = []
+            for p in preds_r1:
+
+                if not hasattr(self, "prev_height"):
+                    self.prev_height = p   # inicializa
+
+                p_smooth = 0.7 * self.prev_height + 0.3 * p
+                self.prev_height = p_smooth
+
+                smoothed.append(p_smooth)
+
+            preds_r1 = np.array(smoothed)
+
+        else:
+            # Caso raro: single-value array
+            p = preds_r1.item()
+            if not hasattr(self, "prev_height"):
+                self.prev_height = p
+            preds_r1 = 0.7 * self.prev_height + 0.3 * p
+            self.prev_height = preds_r1
+            preds_r1 = np.array([preds_r1])
+        # =======================================================
+
+        return preds_r1
+
+
+    def predict22(self, imgs):
+
+        if isinstance(imgs, np.ndarray):
+            imgs = [imgs]
+
+        batch = []
+
+        for img in imgs:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            tensor = self.transform(image=img_rgb)["image"]  # CHW
+
+            #tensor = self.transform(image=img_rgb)["image"]  # CHW torch.Tensor
+            #tensor = normalize_torch(tensor)
+            
+            batch.append(tensor)
+
+            #print("Tensor checksum:", tensor.sum().item())
+
+
+        batch = torch.stack(batch).to(self.device)
+
+        self.eval()
+        self.backbone.eval()
+
+        with torch.no_grad():
+            preds = self.forward(batch).squeeze(1).cpu().numpy()
+
+        return preds
+    
+    def pred_one(self, img):
+        """
+        Prediz uma única imagem crua (BGR ou RGB).
+        Evita empilhamento de batch e funciona para webcam.
+        """
+
+        # Se vier BGR do OpenCV → converter para RGB
+        if img.shape[2] == 3:
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        else:
+            img_rgb = img
+
+        # Aplicar transform (Albumentations → Tensor CHW)
+        tensor = self.transform(image=img_rgb)["image"].unsqueeze(0).to(self.device)
+
+        self.eval()
+        self.backbone.eval()
+
+        with torch.no_grad():
+            pred = self.forward(tensor).item()
+
+        return pred
+
+
+
+    
+
+
+
+    # ---------------------------------------------------------
+    # PREDIÇÃO ÚNICA
+    # ---------------------------------------------------------
+    def predict_single(self, img):
+        img_tensor = self.transform(image=img)["image"].unsqueeze(0).to(self.device)
+
+        self.eval()
+        self.backbone.eval()
+
+        with torch.no_grad():
+            output = self.forward(img_tensor)
+
+        return output.item()

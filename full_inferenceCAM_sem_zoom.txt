@@ -1,0 +1,172 @@
+from ultralytics import YOLO
+import cv2
+import numpy as np
+import torch
+import pandas as pd
+from Arch import NewDirectModel_Inference as NDM
+import time
+
+pd.options.display.max_columns = None
+pd.options.display.max_colwidth = None
+pd.options.display.width = 0
+
+
+# ======================================================
+# FUNÇÃO: Zero-padding para tornar a imagem quadrada
+# ======================================================
+def pad_to_square_center(img):
+    h, w = img.shape[:2]
+    size = max(h, w)
+
+    padded = np.zeros((size, size, 3), dtype=img.dtype)
+
+    y_off = (size - h) // 2
+    x_off = (size - w) // 2
+
+    padded[y_off:y_off + h, x_off:x_off + w] = img
+    return padded
+
+
+# ---------------- Inicialização do modelo ----------------
+
+Segmentation = YOLO("models/SegARC_v04_lr0.0001_5k/weights/best.pt")
+Regressor = NDM("efficientnet_lite").load_model(
+    "models\\RegArc\\MIX\\efficientnet_lite_120x120_2025_12_04_HashSplit_UnfreezeAll_NoHead_ADAMW_retrained.pth"
+)
+
+df_localizer = pd.DataFrame(columns=[
+    "frame_id", "box_id", "box_xmin", "box_ymin", "box_xmax", "box_ymax", "pred_height_cm"
+])
+
+frame_id = 0
+
+# ---------------- Inicialização da Webcam ----------------
+cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    raise RuntimeError("Não foi possível acessar a webcam")
+
+print("Pressione Q para sair")
+
+
+# ======================================================
+# PARAMETROS DO SMOOTHING TEMPORAL
+# ======================================================
+smooth_boxes = {}   # guarda histórico das caixas
+alpha = 0.8         # 80% caixa antiga, 20% caixa nova
+
+
+# ---------------- LOOP PRINCIPAL ----------------
+while True:
+
+    ret, frame = cap.read()
+    if not ret:
+        print("Frame não capturado.")
+        break
+
+    img_full = frame.copy()
+    img_rgb = cv2.cvtColor(img_full, cv2.COLOR_BGR2RGB)
+
+    # ================= YOLO Prediction =================
+    out = Segmentation.predict(img_rgb, conf=0.5, verbose=False)[0]
+    boxes = out.boxes.xyxy.cpu().numpy()
+    n_boxes = boxes.shape[0]
+
+    # ======================================================
+    #     APLICA SMOOTHING TEMPORAL (EMA) AQUI
+    # ======================================================
+    smoothed = []
+
+    for i in range(n_boxes):
+        xmin, ymin, xmax, ymax = boxes[i]
+
+        if i in smooth_boxes:
+            prev = smooth_boxes[i]
+            xmin = alpha * prev[0] + (1 - alpha) * xmin
+            ymin = alpha * prev[1] + (1 - alpha) * ymin
+            xmax = alpha * prev[2] + (1 - alpha) * xmax
+            ymax = alpha * prev[3] + (1 - alpha) * ymax
+
+        # atualiza histórico
+        smooth_boxes[i] = (xmin, ymin, xmax, ymax)
+        smoothed.append([xmin, ymin, xmax, ymax])
+
+    boxes = np.array(smoothed).astype(int)
+    # ======================================================
+
+
+    images_raw = []
+    indices_df = []
+
+    # ======================================================
+    #            CROP + ZERO PADDING QUADRADO
+    # ======================================================
+    for i in range(n_boxes):
+
+        xmin, ymin, xmax, ymax = boxes[i]
+        crop = img_full[ymin:ymax, xmin:xmax]
+
+        if crop.size == 0:
+            continue
+
+        # Verificar proporção
+        ratio = max(crop.shape[0], crop.shape[1]) / min(crop.shape[0], crop.shape[1])
+        if ratio > 2:
+            continue
+
+        crop_square = pad_to_square_center(crop)
+        images_raw.append(crop_square)
+
+        df_localizer.loc[len(df_localizer)] = {
+            "frame_id": frame_id,
+            "box_id": i,
+            "box_xmin": xmin,
+            "box_ymin": ymin,
+            "box_xmax": xmax,
+            "box_ymax": ymax,
+            "pred_height_cm": None
+        }
+
+        indices_df.append(len(df_localizer) - 1)
+
+
+    # ========== Predição do Regressor em BATCH ==========
+    if len(images_raw) > 0:
+        preds_r1 = Regressor.predict(images_raw)
+        df_localizer.loc[indices_df, "pred_height_cm"] = preds_r1
+
+
+    # ----------------------------------------------------
+    #   DESENHO — AGORA USANDO APENAS indices_df
+    # ----------------------------------------------------
+    for k, df_idx in enumerate(indices_df):
+        xmin = int(df_localizer.loc[df_idx, "box_xmin"])
+        ymin = int(df_localizer.loc[df_idx, "box_ymin"])
+        xmax = int(df_localizer.loc[df_idx, "box_xmax"])
+        ymax = int(df_localizer.loc[df_idx, "box_ymax"])
+
+        r1_value = float(df_localizer.loc[df_idx, "pred_height_cm"])
+
+        print(f"Crop válido {k} size: {images_raw[k].shape} | Predicted Height (cm): {r1_value:.2f}")
+
+        text = f"{r1_value:.1f}"
+
+        cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
+
+        for j, line in enumerate(text.split("\n")):
+            y_offset = ymax - 10 + j * 30
+            cv2.putText(
+                frame,
+                line,
+                (xmin, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 0, 255), 2
+            )
+
+    cv2.imshow("Webcam - Altura Estimada", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord("q"):
+        print("Encerrando...")
+        break
+
+    frame_id += 1

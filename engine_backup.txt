@@ -1,0 +1,440 @@
+class Engine(Dataset):
+    def __init__(self, dataframe):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        self.scaler = SETTINGS.SCALER 
+        
+        self.model_loaded = False
+        self.default_backbone = "VGG19"
+        self._cache = OrderedDict()
+        self._max_cache_size = SETTINGS.MAX_CACHE
+        self.DATA = dataframe
+        self.k_folds = SETTINGS.K_FOLD
+        self.__kFoldSplit__()
+
+        # Checkpoints + History Variáveis
+        self.history_replaced = False
+        self.default_history = {
+            "epoch": [], "train_loss": [], "val_loss": [],
+            "learning_rate": [], "time_per_epoch": [], "run_range":[]
+        }
+        self.primary_history = self.temp_history = copy.deepcopy(self.default_history)
+        self.checkpoint = {"history": self.default_history}
+
+        # Controle Range e Epoch
+        self.range_initial = 0 
+        self.start_epoch = 0
+
+
+    # ========================================
+    # Transform e amostragem
+    # ========================================
+    def __apply_transform__(self, img):
+        img = img.numpy()
+        Transform = A.Compose([
+            A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.2, p=0.5),
+            A.RGBShift(r_shift_limit=5,g_shift_limit=5,b_shift_limit=5,p=0.3),
+            A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.3),
+            A.ISONoise(color_shift=(0.005, 0.01), intensity=(0.05, 0.1), p=0.8),
+            A.Perspective(scale=(0.01, 0.03), p=0.3)
+        ])
+        return torch.from_numpy(Transform(image=img)["image"]) 
+
+    def __sample__(self):
+        if not self.model_loaded:
+            self.backbone_name = getattr(self, "backbone_name", "VGG19")
+            self.use_mlp = getattr(self, "use_mlp", True)
+            self.USE_TRANSFORM = getattr(self, "USE_TRANSFORM", True)
+            self.load_model()
+        idx = random.randrange(len(self.DATA)) 
+        img = self.__get_image__(idx)
+        if self.USE_TRANSFORM:
+            img = self.__apply_transform__(img)
+        plt.imshow(img.numpy())
+        plt.axis('off')
+        plt.show()
+
+    # ========================================
+    # KFold
+    # ========================================
+    def __kFoldSplit__(self):
+        self.SPLITS = []
+        kf = KFold(n_splits=self.k_folds, shuffle=True, random_state=42)
+        for train_idx, val_idx in kf.split(self.DATA):
+            self.SPLITS.append((train_idx, val_idx))
+
+    # ========================================
+    # Data handling
+    # ========================================
+    def __get_image__(self, idx):
+        row = self.DATA.iloc[idx]
+        img_path = os.path.join(SETTINGS.DATASET_DIR, row["file"])
+        image_raw = tf.io.read_file(img_path)
+        image = tf.image.decode_image(image_raw, channels=3)
+        image = tf.image.convert_image_dtype(image, tf.float32)
+        height, width = self.image_size
+        image = tf.image.resize(image, [height, width])
+        return torch.from_numpy(image.numpy())
+
+    def __len__(self):
+        return len(self.DATA)
+
+    def __getitem__(self, idx):
+        if idx in self._cache:
+            self._cache.move_to_end(idx)
+            return self._cache[idx]
+
+        img = self.__get_image__(idx)
+        if self.USE_TRANSFORM:
+            img = self.__apply_transform__(img)
+
+        img = img.permute(2, 0, 1).contiguous().float()
+
+        if SETTINGS.USE_SCALER:
+            y = torch.tensor(self.DATA.iloc[idx]["DELTA_SCALED"], dtype=torch.float32)
+            
+        else:
+            y = torch.tensor(self.DATA.iloc[idx]["deltaH_cm"], dtype=torch.float32)
+        result = (img, y)
+
+        self._cache[idx] = result
+        self._cache.move_to_end(idx)
+        if len(self._cache) > self._max_cache_size:
+            self._cache.popitem(last=False)
+
+        return result
+
+    # ========================================
+    # Configurações
+    # ========================================
+    def load_model(self, custom_model=None, custom:bool=False):
+        if custom:
+            self.model = custom_model
+            self.model.to(self.device)
+            self.image_size = self.model.image_size
+
+            self.optimizer = Adam(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay
+            )
+
+            # ✅ scheduler somente se ativado
+            if self.use_schedule:
+                self.scheduler = CosineAnnealingLR(self.optimizer, T_max=self.epochs, eta_min=1e-6)
+            else:
+                self.scheduler = None
+
+            ckpt = custom_model.checkpoint
+            self.optimizer.load_state_dict(ckpt["optimizer_state"])
+
+            if self.scheduler is not None and ckpt["scheduler_state"] is not None:
+                self.scheduler.load_state_dict(ckpt["scheduler_state"])
+
+            if self.use_last_lr:
+                self.learning_rate = ckpt['last_lr']
+
+            self.primary_history = ckpt["history"]
+            self.start_epoch = len(self.primary_history["epoch"])
+            self.range_initial = len(self.primary_history['val_loss'])
+
+        else:
+            self.model = NewDirectModel(backbone_name=self.backbone_name).to(self.device)
+            self.image_size = self.model.image_size
+            self.model_loaded = True
+
+            self.optimizer = Adam(
+                self.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay
+            )
+
+            # ✅ scheduler opcional
+            if self.use_schedule:
+                self.scheduler = CosineAnnealingLR(self.optimizer, T_max=self.epochs, eta_min=1e-6)
+            else:
+                self.scheduler = None
+
+    def set_parameters(
+        self, batch_size:int , learning_rate:float, epochs:int,
+        patience:int, model_name:str, accumulation_steps:int=1,
+        use_transform:bool=True, backbone_name:str="VGG19",
+        use_mlp:bool=True, weight_decay:float=1e-4,
+        use_schedule:bool=True
+    ):
+        self.weight_decay = weight_decay
+        self.batch_size = batch_size
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.patience = patience
+        self.accumulation_steps = accumulation_steps
+        self.USE_TRANSFORM = use_transform
+        self.backbone_name = backbone_name
+        self.use_mlp = use_mlp
+        self.model_name = model_name
+        self.use_schedule = use_schedule   # ✅ novo parâmetro
+
+    # ========================================
+    # Checkpoint
+    # ========================================
+    def _save_checkpoint(self, fold_idx, epoch, 
+                         model_state, optimizer_state, scheduler_state,
+                         history, best_val_loss, 
+                         learning_rate, epochs, batch_size, device,
+                         scaler_y_mean, scaler_y_scale, last_lr):
+
+        return {
+            "fold": fold_idx,
+            "epoch": epoch + 1,
+            "last_lr": last_lr,
+            "model_state": model_state,
+            "optimizer_state": optimizer_state,
+            "scheduler_state": scheduler_state,
+            "history": history,
+            "best_val_loss": best_val_loss,
+            "metadata": {
+                "learning_rate": learning_rate,
+                "num_epochs": epochs,
+                "batch_size": batch_size,
+                "device": device,
+                "training_date": datetime.today().strftime("%Y_%m_%d"),
+                "backbone_name": self.backbone_name,
+                "use_mlp": self.use_mlp
+            },
+            "scaler_y_mean": scaler_y_mean,
+            "scaler_y_scale": scaler_y_scale,
+        }
+
+    def _printer(self, arg):
+        if not arg:
+            return 
+        if arg == "show_settings":
+            print("================================================")
+            print("Training Settings")
+            print("================================================")
+            print(   f"Model: {self.model_name}\n"
+                    f"Backbone: {self.backbone_name}\n"
+                    f"Batch Size: {self.batch_size}\n"
+                    f"Learning Rate: {self.learning_rate}\n"
+                    f"Epochs: {self.epochs}\n"
+                    f"Patience: {self.patience}\n"
+                    f"Using Augmentation: {self.USE_TRANSFORM}\n"
+                    f"Using Scheduler: {self.use_schedule}")
+
+    def _save_model(self, fold_idx, checkpoint):
+        save_path = os.path.join(self.output_dir, f"{self.model_name}_fold{fold_idx}.pth")
+        torch.save(checkpoint, save_path)
+
+    # ========================================
+    # Run Engine
+    # ========================================
+    def run(self, output_dir, custom_model=None, show_all_epochs:bool=True, use_last_lr:bool=True):
+        self.use_last_lr = use_last_lr
+        self.show_all_epochs = show_all_epochs 
+        self.output_dir = output_dir
+
+        best_overall_metric = float("inf")
+        initial_value = float("inf")
+
+        best_fold_path = None
+        best_checkpoint = None
+        best_fold_idx = None
+
+        self.metric = {fold: initial_value for fold in range(self.k_folds)}
+        self.history_replaced = True
+
+        # ================================================
+        # K-Fold Loop
+        # ================================================
+        for fold_idx, (train_idx, val_idx) in enumerate(self.SPLITS):
+
+            if custom_model is None:
+                self.load_model(custom=False)
+            else:
+                self.load_model(custom=True, custom_model=custom_model)
+
+            self._printer("show_settings")
+            arg = False
+
+            print("================================================\n")
+            print(f"Treinamento com Fold-{fold_idx}")
+
+            train_dataset = Subset(self, train_idx)
+            val_dataset = Subset(self, val_idx)
+            train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, pin_memory=True)
+            val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
+
+            best_metric_value, history = self._run_epochs(train_loader, val_loader, fold_idx)
+
+            self.metric[fold_idx] = best_metric_value
+
+            # Melhor fold
+            if best_metric_value < best_overall_metric:
+                best_overall_metric = best_metric_value
+                best_fold_path = f"{self.model_name}_fold{fold_idx}.pth"
+                best_checkpoint = copy.deepcopy(self.checkpoint)
+                best_fold_idx = fold_idx
+
+
+            print(f"Fold {fold_idx} | checkpoint shape: {best_checkpoint['model_state']}")
+
+        if best_checkpoint is None:
+            best_checkpoint = copy.deepcopy(self.checkpoint)
+
+        best_history = best_checkpoint.get('history', self.default_history)
+
+        self.primary_history['epoch'].extend(best_history.get('epoch', []))
+        self.primary_history['train_loss'].extend(best_history.get('train_loss', []))
+        self.primary_history['val_loss'].extend(best_history.get('val_loss', []))
+        self.primary_history['learning_rate'].extend(best_history.get('learning_rate', []))
+
+        if 'time_per_epoch' in best_history:
+            self.primary_history['time_per_epoch'].extend(best_history['time_per_epoch'])
+
+        # Range no histórico
+        self.range_final = len(self.primary_history['val_loss'])
+        if self.range_final == 0:
+            self.range_final = 1
+        range_ = (self.range_initial, self.range_final)
+        self.primary_history["run_range"].append(range_)
+
+        # Criar checkpoint final
+        final_checkpoint = self._save_checkpoint(
+            fold_idx=best_checkpoint.get('fold', best_fold_idx),
+            epoch=best_checkpoint.get('epoch', 0),
+            model_state=best_checkpoint.get('model_state', None),
+            optimizer_state=best_checkpoint.get('optimizer_state', None),
+            scheduler_state=best_checkpoint.get('scheduler_state', None),
+            history=self.primary_history,
+            best_val_loss=best_overall_metric,
+            learning_rate=self.learning_rate,
+            last_lr=best_checkpoint.get("last_lr", self.optimizer.param_groups[0]["lr"]),
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            device=str(self.device),
+            scaler_y_mean=best_checkpoint.get('scaler_y_mean', self.scaler.mean_.tolist() if hasattr(self.scaler, "mean_") else None),
+            scaler_y_scale=best_checkpoint.get('scaler_y_scale', self.scaler.scale_.tolist() if hasattr(self.scaler, "scale_") else None)
+        )
+
+        self._save_model(fold_idx=best_fold_idx, checkpoint=final_checkpoint)
+
+        print(f"\nMelhor Fold: {best_fold_path} | Best Metric: {best_overall_metric:.5f}")
+
+
+    # ========================================
+    # Run Epochs
+    # ========================================
+    def _run_epochs(self, train_loader, val_loader, fold_idx):
+        criterion = nn.L1Loss()  # MAE como loss
+        use_amp = torch.cuda.is_available()
+        scaler_amp = torch.amp.GradScaler(enabled=use_amp)
+
+        best_metric_value = float("inf")
+        current_patience = 0
+        self.temp_history = copy.deepcopy(self.default_history)
+        e = 0
+
+        for epoch_display in tqdm(range(self.epochs), desc=f"Fold {fold_idx+1} Epochs", leave=False):
+            e += 1
+            early_time = time.time()
+
+            # ======== Treinamento ========
+            self.model.train()
+            train_loss = 0.0
+
+            for step, (img, y) in enumerate(train_loader):
+                img, y = img.to(self.device), y.to(self.device)
+                self.optimizer.zero_grad()
+
+                with torch.amp.autocast(device_type=self.device.type, enabled=use_amp):
+                    outputs = self.model(img).squeeze(-1)
+                    loss = criterion(outputs, y) / self.accumulation_steps
+
+                if use_amp:
+                    scaler_amp.scale(loss).backward()
+                    if (step + 1) % self.accumulation_steps == 0:
+                        scaler_amp.step(self.optimizer)
+                        scaler_amp.update()
+                        self.optimizer.zero_grad()
+                else:
+                    loss.backward()
+                    if (step + 1) % self.accumulation_steps == 0:
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+
+                train_loss += loss.item() * img.size(0) * self.accumulation_steps
+
+            train_loss /= len(train_loader.dataset)
+            self.last_deltaTime = time.time() - early_time
+            self.temp_history["time_per_epoch"].append(self.last_deltaTime)
+
+            # ======== Validação ========
+            self.model.eval()
+            val_loss = 0.0
+
+            with torch.no_grad():
+                for img, y in val_loader:
+                    img, y = img.to(self.device), y.to(self.device)
+                    with torch.amp.autocast(device_type=self.device.type, enabled=use_amp):
+                        outputs = self.model(img).squeeze(-1)
+                        loss = criterion(outputs, y)
+
+                    val_loss += loss.item() * img.size(0)
+
+            val_loss /= len(val_loader.dataset)
+
+            # Step scheduler
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+            # ======== Histórico ========
+            self.temp_history["epoch"].append(self.start_epoch + e)
+            self.temp_history["train_loss"].append(train_loss)
+            self.temp_history["val_loss"].append(val_loss)
+            self.temp_history["learning_rate"].append(self.optimizer.param_groups[0]["lr"])
+
+            # ======== Métrica MAE ========
+            metric_current = val_loss
+
+            is_better = metric_current < best_metric_value
+
+            # ======== Checkpoint ========
+            if is_better:
+                print(f"Epoch {e}/{self.epochs} | train_loss: {train_loss:.5f} "
+                      f"val_loss: {val_loss:.5f} lr: {self.optimizer.param_groups[0]['lr']:.6f} (*)")
+
+                best_metric_value = metric_current
+                current_patience = 0
+
+                self.checkpoint = self._save_checkpoint(
+                    fold_idx=fold_idx,
+                    epoch=self.start_epoch + e,
+                    model_state=self.model.state_dict(),
+                    optimizer_state=self.optimizer.state_dict(),
+                    scheduler_state=self.scheduler.state_dict() if self.scheduler is not None else None,
+                    history=self.temp_history,
+                    best_val_loss=best_metric_value,
+                    learning_rate=self.learning_rate,
+                    last_lr=self.optimizer.param_groups[0]["lr"],
+                    epochs=self.epochs,
+                    batch_size=self.batch_size,
+                    device=str(self.device),
+                    scaler_y_mean=self.scaler.mean_.tolist(),
+                    scaler_y_scale=self.scaler.scale_.tolist()
+                )
+
+            else:
+                if self.show_all_epochs:
+                    print(f"Epoch {e}/{self.epochs} | train_loss: {train_loss:.5f} "
+                          f"val_loss: {val_loss:.5f} lr: {self.optimizer.param_groups[0]['lr']:.6f}")
+
+                current_patience += 1
+                if current_patience >= self.patience:
+                    print(f"Early stopping (epoch {self.start_epoch + e})")
+                    break
+
+            torch.cuda.empty_cache()
+
+        print()
+        return best_metric_value, self.temp_history
