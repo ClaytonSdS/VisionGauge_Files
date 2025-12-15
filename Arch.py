@@ -54,185 +54,7 @@ Transform = A.Compose([
             ToTensorV2(),
         ])
 
-Transform_ViT = A.Compose([
-            #A.CLAHE(clip_limit=(2, 2), always_apply=True, p=1.0),
-            A.Resize(224, 224),
-            #A.MedianBlur(blur_limit=3, p=1.0),
-            #BilateralFilter(diameter=3,sigma_color=30,sigma_space=30,p=1.0),
 
-            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ToTensorV2(),
-        ])
-
-
-
-class ViT_Inference(nn.Module):
-    def __init__(self, backbone_name: str = "vit_b_16",  transform=Transform_ViT, debug: bool = False):
-        super().__init__()
-
-        self.model_name = backbone_name.lower()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.debug = debug
-
-        # será substituído pelo metadata do checkpoint
-        self.use_head = False
-        self.image_size = (224, 224)
-
-        # Transform padrão do ViT
-        self.transform = transform
-
-        self.to(self.device)
-
-    # ---------------------------------------------------------
-    # Head MLP (mesmo do treino)
-    # ---------------------------------------------------------
-    def build_head(self, output_features):
-        self.head = nn.Sequential(
-            nn.Linear(output_features, 256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(128, 1),
-        )
-
-        # Em inferência → tudo congelado
-        for p in self.head.parameters():
-            p.requires_grad = False
-
-        if self.debug:
-            print(f"[Inference] Head criada ({output_features} → 256 → 128 → 1)")
-
-    # ---------------------------------------------------------
-    # Forward
-    # ---------------------------------------------------------
-    def forward(self, x):
-        x = x.to(self.device)
-
-        if hasattr(self, "head") and self.use_head:
-            feats = self.backbone(x)
-            return self.head(feats)
-        else:
-            return self.backbone(x)
-
-    # ---------------------------------------------------------
-    # Load backbone ViT
-    # ---------------------------------------------------------
-    def load_backbone(self):
-        name = self.model_name
-
-        if name in ("vit", "vit_b16", "vit_b_16"):
-            m = models.vit_b_16(weights=None)
-        elif name == "vit_b_32":
-            m = models.vit_b_32(weights=None)
-        elif name == "vit_l_16":
-            m = models.vit_l_16(weights=None)
-        elif name == "vit_l_32":
-            m = models.vit_l_32(weights=None)
-        else:
-            raise ValueError(f"Backbone ViT inválido: {self.model_name}")
-
-        out_feats = m.hidden_dim
-        self.image_size = (224, 224)
-
-        if self.use_head:
-            m.heads = nn.Identity()
-            self.build_head(output_features=out_feats)
-        else:
-            m.heads = nn.Linear(out_feats, 1)
-
-        # Inferência → congelar tudo
-        for p in m.parameters():
-            p.requires_grad = False
-
-        self.backbone = m
-
-    # ---------------------------------------------------------
-    # Load checkpoint compatível com NewDirectModel
-    # ---------------------------------------------------------
-    def load_model(self, path_or_ckpt):
-        if isinstance(path_or_ckpt, str):
-            ckpt = torch.load(path_or_ckpt, map_location=self.device)
-        else:
-            ckpt = path_or_ckpt
-
-        meta = ckpt.get("metadata", {})
-
-        self.model_name = meta.get("backbone_name", self.model_name)
-        self.use_head   = meta.get("use_head", False)
-
-        # recriar arquitetura EXATAMENTE igual ao treino
-        self.load_backbone()
-
-        # carregar pesos
-        state = ckpt.get("model_state", None)
-        if state is None:
-            raise ValueError("Checkpoint sem 'model_state'")
-
-        missing, unexpected = self.load_state_dict(state, strict=False)
-
-        if self.debug:
-            print("[Inference] Missing keys:", missing)
-            print("[Inference] Unexpected keys:", unexpected)
-
-        self.eval()
-        self.to(self.device)
-        return self
-
-    # ---------------------------------------------------------
-    # Predict helper
-    # ---------------------------------------------------------
-    def predict(self, imgs):
-
-        if isinstance(imgs, np.ndarray):
-            imgs = [imgs]
-
-        batch = []
-
-        for img in imgs:
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            tensor = self.transform(image=img_rgb)["image"]
-            batch.append(tensor)
-
-        batch = torch.stack(batch).to(self.device)
-
-        self.eval()
-        self.backbone.eval()
-
-        with torch.no_grad():
-            preds_r1 = self.forward(batch).squeeze(1).cpu().numpy()
-
-        # =======================================================
-        # APLICANDO EMA - Suavização Temporal
-        # =======================================================
-        # Se for batch > 1, aplico suavização em cada item
-        if preds_r1.ndim == 1:
-
-            smoothed = []
-            for p in preds_r1:
-
-                if not hasattr(self, "prev_height"):
-                    self.prev_height = p   # inicializa
-
-                p_smooth = 0.7 * self.prev_height + 0.3 * p
-                self.prev_height = p_smooth
-
-                smoothed.append(p_smooth)
-
-            preds_r1 = np.array(smoothed)
-
-        else:
-            # Caso raro: single-value array
-            p = preds_r1.item()
-            if not hasattr(self, "prev_height"):
-                self.prev_height = p
-            preds_r1 = 0.7 * self.prev_height + 0.3 * p
-            self.prev_height = preds_r1
-            preds_r1 = np.array([preds_r1])
-        # =======================================================
-
-        return preds_r1
 
 class NewDirectModel_Inference(nn.Module):
     def __init__(self, backbone_name: str, transform = Transform, input_dim: int = 3, unfreeze_all: bool = False, debug: bool = False):
@@ -292,11 +114,11 @@ class NewDirectModel_Inference(nn.Module):
     # ---------------------------------------------------------
     def load_model(self, path_or_ckpt):
         if isinstance(path_or_ckpt, str):
-            ckpt = torch.load(path_or_ckpt, map_location=self.device)
+            self.ckpt = torch.load(path_or_ckpt, map_location=self.device)
         else:
-            ckpt = path_or_ckpt
+            self.ckpt = path_or_ckpt
 
-        meta = ckpt.get("metadata", {})
+        meta = self.ckpt.get("metadata", {})
         self.model_name = meta.get("backbone_name", self.model_name)
         self.use_head = meta.get("use_head", False)
 
@@ -304,7 +126,7 @@ class NewDirectModel_Inference(nn.Module):
         self.load_backbone()
 
         # Carrega pesos
-        state = ckpt.get("model_state", None)
+        state = self.ckpt.get("model_state", None)
         if state is None:
             raise ValueError("Checkpoint sem 'model_state'")
 

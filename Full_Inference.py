@@ -6,7 +6,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import albumentations as A
 from Arch import NewDirectModel_Inference as NDM
-from Arch import ViT_Inference as ViT
 
 pd.options.display.max_columns = None
 pd.options.display.max_colwidth = None
@@ -86,27 +85,15 @@ def zoom_out_to_size(img, xmin, ymin, xmax, ymax, target=120):
 # ======================================================
 Segmentation = YOLO("models/SegARC_v04_lr0.0001_5k/weights/best.pt")
 
-Regressor_Resnet = NDM("resnet").load_model("models\\RegArc\\MIX\\023_resnet_120x120_2025_12_12_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
-#Regressor_Resnet = NDM("resnet").load_model("models\\RegArc\MIX\\resnet_120x120_2025_12_10_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
-
-Regressor_EF1 = NDM("efficientnet_lite").load_model("models\\RegArc\\MIX\\efficientnet_lite_120x120_2025_12_04_HashSplit_UnfreezeAll_NoHead_ADAMW_retrained.pth")
-Regressor_EF1 = NDM("resnet").load_model("models\\RegArc\MIX\\017_resnet_120x120_2025_12_12_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
-
-#Regressor_EF2 = NDM("efficientnet_lite").load_model( "models\\RegArc\\MIX\\efficientnet_lite_120x120_2025_12_04_HashSplit_UnfreezeAll_NoHead_ADAMW_retrained.pth")
-Regressor_EF2 = NDM("efficientnet_lite").load_model( "models\RegArc\MIX\efficientnet_lite_120x120_2025_12_10_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
-
-Regressor_ViT = ViT("vit").load_model( "models\\RegArc\\MIX\\vit_b_16_224x224_2025_12_06_HashSplit_Unfreeze_NoHead_ADAMW.pth")
+Regressor_Resnet = NDM("resnet").load_model(r"models\RegArc\Resnet\resnet\014_resnet_120x120_2025_12_12_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
+Regressor_EF1 = NDM("efficientnet_lite").load_model(r"models\RegArc\Resnet\MIX\efficientnet_lite_120x120_2025_12_01_HashSplit_UnfreezeAll_NoHead_ADAMW.pth")
+Regressor_EF2 = NDM("efficientnet_lite").load_model(r"models\RegArc\EfficientNet_678\efficientnet_lite_120x120.pth")
 
 # ======================================================
 # PIPELINE
 # ======================================================
 paths = [
-    r"dataset\dataset_od\6k\test\16.6\image_resized_4823_png.rf.8b8157f71c117af388f48cf409655fd9.jpg",
-    r"dataset\dataset_od\6k\test\16.6\image_resized_6521_png.rf.0c4c93389eaa085a229b5717400bfb4a.jpg",
-    r"dataset\dataset_od\6k\test\11.1\image_resized_4735_png.rf.e4a4842315253a922b6d0e0139e26e19.jpg",
-    r"dataset\dataset_od\6k\test\32.3\image_resized_5017_png.rf.081da2d1678e94794db08ac856074646.jpg",
-    r"dataset\dataset_od\6k\test\37.8\image_resized_4278_png.rf.c8fa62c6464f964573f9a986dc04313e.jpg",
-    r"dataset\dataset_od\6k\valid\37.6\image_resized_1137_png.rf.2684dc2c9c59543af5eecc463f54479f.jpg"
+    r"dataset\testing\processed\image_test_570.png",
 ]
 
 out = Segmentation.predict(paths, conf=0.5)
@@ -166,7 +153,6 @@ for boxes in boxes_list:
     preds_resnet = Regressor_Resnet.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
     preds_ef1    = Regressor_EF1.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
     preds_ef2    = Regressor_EF2.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
-    preds_vit    = Regressor_ViT.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
 
     # ==================================================
     # SALVAR SOMENTE RESNET NO DF
@@ -177,7 +163,7 @@ for boxes in boxes_list:
     # ==================================================
     # PLOT 1x4
     # ==================================================
-    fig, axs = plt.subplots(1, 4, figsize=(24, 6))
+    fig, axs = plt.subplots(1, 3, figsize=(24, 6))
 
     for ax in axs:
         ax.imshow(cv2.cvtColor(img_full, cv2.COLOR_BGR2RGB))
@@ -186,7 +172,6 @@ for boxes in boxes_list:
     axs[0].set_title("ResNet")
     axs[1].set_title("EffNet-Lite 1")
     axs[2].set_title("EffNet-Lite 2")
-    axs[3].set_title("ViT")
 
     bbox_info = []
 
@@ -204,14 +189,12 @@ for boxes in boxes_list:
             float(preds_resnet[i]),
             float(preds_ef1[i]),
             float(preds_ef2[i]),
-            float(preds_vit[i])
         ]
 
         labels = [
-            f"ResNet: {values[0]:.2f}",
-            f"EF1: {values[1]:.2f}",
-            f"EF2: {values[2]:.2f}",
-            f"ViT: {values[3]:.2f}"
+            f"ResNet: {values[0]:.2f} ({Regressor_Resnet.ckpt['best_val_loss']:.2f})", # Regressor_EF1
+            f"EF1: {values[1]:.2f} ({Regressor_EF1.ckpt['best_val_loss']:.2f})",
+            f"EF2: {values[2]:.2f} ({Regressor_EF2.ckpt['best_val_loss']:.2f})",
         ]
 
         for ax, label in zip(axs, labels):
