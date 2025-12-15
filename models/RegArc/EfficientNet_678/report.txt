@@ -1,0 +1,45 @@
+[efficientnet_lite_120x120_2025_12_13_HashSplit_Unfreeze_NoHead_ADAMW_1]
+* Foi treinado até epoca 27
+* set_parameters(
+        batch_size=128, lr_backbone=3e-5,    lr_head=1e-2,          
+        epochs=100, patience=1000, warmup_percentage=0.1, schedule_name = 'cosineannelingwarm', use_transform=True, use_schedule=True, SPLIT_OPTION='HashSplit', backbone_name='efficientnet_lite', unfreeze_all=False, use_head=False, image_size=(120,120), optimizer='AdamW')
+
+* Epoch 25/100 | train_loss: 3.09506 val_loss: 2.03849 | test_loss: 0.00000| lr_head: 0.009330 | lr_backbone: 0.00002799 (*)
+* Epoch 26/100 | train_loss: 2.92551 val_loss: 1.92777 | test_loss: 0.00000| lr_head: 0.009240 | lr_backbone: 0.00002772 (*)
+* Epoch 27/100 | train_loss: 2.85362 val_loss: 1.71394 | test_loss: 0.00000| lr_head: 0.009145 | lr_backbone: 0.00002744 (*)
+=============================================================================================================================
+[efficientnet_lite_120x120_2025_12_13_HashSplit_Unfreeze_NoHead_ADAMW_2]
+* Foi treinado até epoca 15, com um learning rate mais forte no backbone, para convergência mais rápida
+* set_parameters(
+        batch_size=128, lr_backbone=3e-3, lr_head=1e-2,   epochs=100,
+        patience=1000,  warmup_percentage=0.6, 
+        schedule_name = 'cosineannelingwarm', use_transform=True,  use_schedule=True, SPLIT_OPTION='HashSplit', backbone_name='efficientnet_lite', unfreeze_all=False,  use_head=False, image_size=(120,120), optimizer='AdamW')
+
+* Epoch 13/100 | train_loss: 1.33488 val_loss: 0.79746 | test_loss: 0.00000| lr_head: 0.002245 | lr_backbone: 0.00067350 (*)
+* Epoch 14/100 | train_loss: 1.31781 val_loss: 0.78083 | test_loss: 0.00000| lr_head: 0.002410 | lr_backbone: 0.00072300 (*)
+* Epoch 15/100 | train_loss: 1.26580 val_loss: 0.68347 | test_loss: 0.00000| lr_head: 0.002575 | lr_backbone: 0.00077250 (*)
+=============================================================================================================================
+[efficientnet_lite_120x120_2025_12_13_HashSplit_Unfreeze_NoHead_ADAMW_3]
+* Foi treinado até epoca X, com um learning rate mais forte no backbone, para convergência mais rápida
+* set_parameters(
+        batch_size=128,  lr_backbone=3e-3,     lr_head=1e-2,     epochs=100, patience=1000, warmup_percentage=0.4, 
+        schedule_name = 'cosineannelingwarm',use_transform=True,  use_schedule=True,SPLIT_OPTION='HashSplit',backbone_name='efficientnet_lite',unfreeze_all=False,  use_head=False,
+        image_size=(120,120), optimizer='AdamW')
+
+=============================================================================================================================
+[efficientnet_lite_120x120_2025_12_13_HashSplit_Unfreeze_NoHead_ADAMW_4]
+* Foi treinado até epoca 20, com um learning rate mais forte no backbone, para convergência mais rápida
+set_parameters(
+        batch_size=128, lr_backbone=3e-3, lr_head=1e-2,   epochs=20, patience=1000, warmup_percentage=0.1, 
+        schedule_name = 'cosineannelingwarm', use_transform=True,  use_schedule=True, SPLIT_OPTION='HashSplit', backbone_name='efficientnet_lite', unfreeze_all=False,  use_head=False, image_size=(120,120), optimizer='AdamW')
+ ===
+
+5
+Epoch 1/20 | train_loss: 0.80083 val_loss: 0.39159 | test_loss: 0.00000| lr_head: 0.000051 | lr_backbone: 0.00000152 (*)
+Epoch 2/20 | train_loss: 0.78807 val_loss: 0.38235 | test_loss: 0.00000| lr_head: 0.000100 | lr_backbone: 0.00000300 (*)
+Epoch 3/20 | train_loss: 0.78344 val_loss: 0.39494 | test_loss: 0.00000 | lr: 0.000003
+Epoch 4/20 | train_loss: 0.78359 val_loss: 0.41495 | test_loss: 0.00000 | lr: 0.000003
+Epoch 5/20 | train_loss: 0.78287 val_loss: 0.39950 | test_loss: 0.00000 | lr: 0.000003
+Epoch 6/20 | train_loss: 0.78436 val_loss: 0.37640 | test_loss: 0.00000| lr_head: 0.000088 | lr_backbone: 0.00000265 (*)
+Epoch 7/20 | train_loss: 0.78112 val_loss: 0.38596 | test_loss: 0.00000 | lr: 0.000002
+Epoch 8/20 | train_loss: 0.77354 val_loss: 0.36049 | test_loss: 0.00000| lr_head: 0.000075 | lr_backbone: 0.00000225 (*)
