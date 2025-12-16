@@ -234,37 +234,8 @@ class NewDirectModel_Inference(nn.Module):
 
         return preds_r1
 
-
-    def predict22(self, imgs):
-
-        if isinstance(imgs, np.ndarray):
-            imgs = [imgs]
-
-        batch = []
-
-        for img in imgs:
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            tensor = self.transform(image=img_rgb)["image"]  # CHW
-
-            #tensor = self.transform(image=img_rgb)["image"]  # CHW torch.Tensor
-            #tensor = normalize_torch(tensor)
-            
-            batch.append(tensor)
-
-            #print("Tensor checksum:", tensor.sum().item())
-
-
-        batch = torch.stack(batch).to(self.device)
-
-        self.eval()
-        self.backbone.eval()
-
-        with torch.no_grad():
-            preds = self.forward(batch).squeeze(1).cpu().numpy()
-
-        return preds
     
-    def pred_one(self, img):
+    def predict_paths(self, img):
         """
         Prediz uma única imagem crua (BGR ou RGB).
         Evita empilhamento de batch e funciona para webcam.

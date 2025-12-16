@@ -6,20 +6,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import albumentations as A
 from Arch import NewDirectModel_Inference as NDM
+import os
 
 pd.options.display.max_columns = None
 pd.options.display.max_colwidth = None
 pd.options.display.width = 0
 
 # ======================================================
-# FLAG DE ZOOM
+# FLAGS
 # ======================================================
-Adjust_Zoom = False 
+Adjust_Zoom = False
 PLOT_RESULTS = False
 print("Adjust_Zoom =", Adjust_Zoom)
 
 # ======================================================
-# FUNÇÃO: Zero-padding para tornar a imagem quadrada
+# FUNÇÕES AUXILIARES
 # ======================================================
 def pad_to_square_center(img):
     h, w = img.shape[:2]
@@ -30,9 +31,7 @@ def pad_to_square_center(img):
     padded[y_off:y_off + h, x_off:x_off + w] = img
     return padded
 
-# ======================================================
-# FUNÇÃO: Zoom-out até o crop ter pelo menos 120×120
-# ======================================================
+
 def zoom_out_to_size(img, xmin, ymin, xmax, ymax, target=120):
     h, w = img.shape[:2]
     bw = xmax - xmin
@@ -77,8 +76,7 @@ def zoom_out_to_size(img, xmin, ymin, xmax, ymax, target=120):
     )
 
     crop_square = pad_to_square_center(crop)
-    crop_final = cv2.resize(crop_square, (target, target))
-    return crop_final
+    return cv2.resize(crop_square, (target, target))
 
 
 # ======================================================
@@ -97,15 +95,18 @@ Regressor_EF2 = NDM("efficientnet_lite").load_model(r"models\RegArc\EfficientNet
 # PIPELINE
 # ======================================================
 paths = [r"dataset\testing\processed\image_test_570.png"]
-paths = paths = pd.read_csv(r"dataset\testing\dataset_testing_paths.csv")['file'].tolist()
+
+dataframe = pd.read_csv(r"dataset\testing\dataset_testing_paths.csv")
+paths  = dataframe['file'].tolist()
 
 out = Segmentation.predict(paths, conf=0.5)
 
-numero_de_imgs = len(out)
-boxes_list = [out[i].boxes.xyxy.cpu().numpy() for i in range(numero_de_imgs)]
+boxes_list = [out[i].boxes.xyxy.cpu().numpy() for i in range(len(out))]
 
 df_localizer = pd.DataFrame(columns=[
-    "boxes", "path", "box_xmin", "box_ymin", "box_xmax", "box_ymax", "pred_height_cm"
+    "boxes", "path",
+    "box_xmin", "box_ymin", "box_xmax", "box_ymax",
+    "pred_height_cm", "true_height_cm"
 ])
 
 # ======================================================
@@ -119,10 +120,15 @@ for boxes in boxes_list:
     img_full = cv2.imread(paths[paths_count])
     img_h, img_w = img_full.shape[:2]
 
+    # TRUE LABEL DA IMAGEM
+    true_label = dataframe.loc[paths_count, 'deltaH_cm']
+
     row_indices = []
     images_crop_120 = []
 
-    # inicializa linhas
+    # -------------------------------
+    # Inicializa linhas (1 por bbox)
+    # -------------------------------
     for i in range(n_boxes):
         df_localizer.loc[len(df_localizer)] = {
             "boxes": i,
@@ -131,97 +137,58 @@ for boxes in boxes_list:
             "box_ymin": None,
             "box_xmax": None,
             "box_ymax": None,
-            "pred_height_cm": None
+            "pred_height_cm": None,
+            "true_height_cm": true_label
         }
         row_indices.append(len(df_localizer) - 1)
 
-    # crops
+    # -------------------------------
+    # Crops
+    # -------------------------------
     for i in range(n_boxes):
         xmin, ymin, xmax, ymax = boxes[i].astype(int)
 
-        df_localizer.loc[row_indices[i], ["box_xmin","box_ymin","box_xmax","box_ymax"]] = \
-            [xmin, ymin, xmax, ymax]
+        df_localizer.loc[row_indices[i],
+            ["box_xmin", "box_ymin", "box_xmax", "box_ymax"]
+        ] = [xmin, ymin, xmax, ymax]
 
         if Adjust_Zoom:
-            crop_120 = zoom_out_to_size(img_full, xmin, ymin, xmax, ymax, target=120)
+            crop_120 = zoom_out_to_size(img_full, xmin, ymin, xmax, ymax)
         else:
             crop = img_full[ymin:ymax, xmin:xmax]
             crop_120 = pad_to_square_center(crop)
 
         images_crop_120.append(crop_120)
 
-    # ==================================================
-    # PREDIÇÕES
-    # ==================================================
-    preds_resnet = Regressor_Resnet.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
-    preds_ef1    = Regressor_EF1.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
-    preds_ef2    = Regressor_EF2.predict(images_crop_120) if n_boxes else np.zeros((0,), float)
+    # -------------------------------
+    # Predições
+    # -------------------------------
+    preds_resnet = (
+        Regressor_Resnet.predict(images_crop_120)
+        if n_boxes else np.zeros((0,), float)
+    )
 
-    # ==================================================
-    # SALVAR SOMENTE RESNET NO DF
-    # ==================================================
+    # -------------------------------
+    # Salva previsões
+    # -------------------------------
     for i in range(n_boxes):
         df_localizer.loc[row_indices[i], "pred_height_cm"] = float(preds_resnet[i])
 
-    # ==================================================
-    # PLOT
-    if PLOT_RESULTS:
-        fig, axs = plt.subplots(1, 3, figsize=(24, 6))
-
-        for ax in axs:
-            ax.imshow(cv2.cvtColor(img_full, cv2.COLOR_BGR2RGB))
-            ax.axis("off")
-
-        axs[0].set_title("ResNet")
-        axs[1].set_title("EffNet-Lite 1")
-        axs[2].set_title("EffNet-Lite 2")
-
-        bbox_info = []
-
-        for i in range(n_boxes):
-            xmin = int(df_localizer.loc[row_indices[i], "box_xmin"])
-            ymin = int(df_localizer.loc[row_indices[i], "box_ymin"])
-            xmax = int(df_localizer.loc[row_indices[i], "box_xmax"])
-            ymax = int(df_localizer.loc[row_indices[i], "box_ymax"])
-
-            bw = xmax - xmin
-            bh = ymax - ymin
-            bbox_info.append(f"{bw}x{bh}")
-
-            values = [
-                float(preds_resnet[i]),
-                float(preds_ef1[i]),
-                float(preds_ef2[i]),
-            ]
-
-            labels = [
-                f"ResNet: {values[0]:.2f} ({Regressor_Resnet.ckpt['best_val_loss']:.2f})", # Regressor_EF1
-                f"EF1: {values[1]:.2f} ({Regressor_EF1.ckpt['best_val_loss']:.2f})",
-                f"EF2: {values[2]:.2f} ({Regressor_EF2.ckpt['best_val_loss']:.2f})",
-            ]
-
-            for ax, label in zip(axs, labels):
-                ax.add_patch(plt.Rectangle( (xmin, ymin), bw, bh, fill=False, edgecolor='lime', linewidth=2))
-                ax.text(xmin,ymin - 6,label, color='lime',fontsize=10,backgroundcolor='black')
-
-        # título
-        path_parts = paths[paths_count].split("\\")
-        folder = path_parts[2].upper() if len(path_parts) > 2 else "FOLDER"
-        filename = path_parts[-1]
-        bbox_text = " | ".join(bbox_info) if bbox_info else "No boxes"
-
-        plt.suptitle(
-            f"{folder} | {filename} | Img: {img_w}x{img_h} | BBoxes: {bbox_text}",
-            fontsize=14
-        )
-
-        plt.tight_layout()
-        plt.show()
-
     paths_count += 1
 
-import os
-output_dir = r"dataset/testing"
+# ======================================================
+# SALVAR CSV
+# ======================================================
+output_dir = r"dataset\testing"
+os.makedirs(output_dir, exist_ok=True)
+
+# abs_error
+df_localizer['abs_error'] = abs(df_localizer['pred_height_cm'] - df_localizer['true_height_cm'])            # Erro absoluto para MAE
+df_localizer['signed_error'] = (df_localizer['pred_height_cm'] - df_localizer['true_height_cm'])            # Erro para teste de subestimação / superestimação
+df_localizer['squared_error'] = df_localizer['signed_error'] ** 2                                           # Erro quadrático para RMSE
+df_localizer['relative_error_pct'] = (df_localizer['signed_error'] / df_localizer['true_height_cm']) * 100  # Erro relativo em %
+
+
 save_path = os.path.join(output_dir, "testing_predictions.csv")
 df_localizer.to_csv(save_path, index=False)
 
