@@ -10,7 +10,7 @@ save_path = "dataset/training/resized"
 my_current_dir = os.getcwd()
 folder_path = os.path.join(my_current_dir, folder_path)
 save_path = os.path.join(my_current_dir, save_path)
-USE_CLAHE = True
+USE_CLAHE = False
 
 target_shape = (1000, 1000)
 

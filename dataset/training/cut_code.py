@@ -90,25 +90,30 @@ for filename in tqdm.tqdm(os.listdir(folder_path)):
 
     img = cv2.imread(os.path.join(folder_path, filename))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    #img= cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    img= cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
     
-    if count <= 9004:
+    if count <= 54:
         recorte = crop_bottom_center(
-            adjust_temperature(img, i=0), # i > 0 -> -Temp | i < 0 -> +Temp
-            crop_h=1100,
-            crop_w=1100,
-            start_row=800,
-            horizontal_shift=50
+            adjust_temperature(img, i=2), # [i>0 -> -Temp] | [i<0 -> +Temp]
+
+            crop_h=1800,
+            crop_w=1800,
+            start_row=600,
+            horizontal_shift=150
         )
 
-    if count > 900004:
+    elif count <= 1800:
         recorte = crop_bottom_center(
-            adjust_temperature(img, i=-8), # i > 0 -> -Temp | i < 0 -> +Temp
-            crop_h=1100,
-            crop_w=1100,
-            start_row=800,
-            horizontal_shift=250
+            adjust_temperature(img, i=2), # [i>0 -> -Temp] | [i<0 -> +Temp]
+
+            crop_h=1800,
+            crop_w=1800,
+            start_row=600,
+            horizontal_shift=300
         )
+
+
+    recorte = cv2.resize(recorte, (1000, 1000))
 
     plt.imsave(os.path.join(save_path, f"image_{initial_number}.png"), recorte)
 
