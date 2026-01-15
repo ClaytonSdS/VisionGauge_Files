@@ -1,1 +1,5 @@
 httpsgithub.comsyedjameelGraduated-Flask-Liquid-Level-Detectiontab=readme-ov-file
+
+Faceli et al, 2011 - sobre test set e seu impacto no treinamento
+
+An introduction to ROC analysis tom faweett
