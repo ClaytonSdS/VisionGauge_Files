@@ -40,7 +40,7 @@ class BilateralFilter(A.ImageOnlyTransform):
 
 Transform = A.Compose([
             #A.CLAHE(clip_limit=(2, 2), p=1.0),
-            A.CLAHE(clip_limit=(2, 2), always_apply=True, p=1.0),
+            #A.CLAHE(clip_limit=(2, 2), always_apply=True, p=1.0),
             A.Resize(120, 120),
             #A.MedianBlur(blur_limit=3, p=1.0),
             #BilateralFilter(diameter=3,sigma_color=30,sigma_space=30, p=1.0),

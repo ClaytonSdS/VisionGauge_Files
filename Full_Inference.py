@@ -132,7 +132,7 @@ class PredictionCache:
 # ======================================================
 Segmentation = YOLO("models/SegARC_v04_lr0.0001_5k/weights/best.pt")
 
-Regressor_Resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\Resnet\resnet_120x120_2025_12_20_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
+Regressor_Resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\resnet\unfreeze_last2\resnet_120x120_2026_01_11_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
 
 # ======================================================
 # PIPELINE
@@ -248,7 +248,7 @@ df_localizer["relative_error_pct"] = (
     df_localizer["signed_error"] / df_localizer["true_height_cm"]
 ) * 100
 
-save_path = os.path.join(output_dir, "resnet_retrained_predictions.csv")
+save_path = os.path.join(output_dir, "resnet_predictions.csv")
 df_localizer.to_csv(save_path, index=False)
 
 print(f"\n✅ Dataset salvo em: {save_path}")

@@ -7,10 +7,15 @@ from Arch import NewDirectModel_Inference as NDM
 import time
 import matplotlib.pyplot as plt
 
+# Parallax Parameters
+n_air = 1.000293 # índice de refração do ar
+n_m = 1.53 # índice de refração do acrílico
+t = 0.1 # espessura do acrílico em cm 1mm
+d = 26 # distância entre o objeto e a lente em cm
+
+
 # ================= CONFIG =================
-Adjust_Zoom = False
 USE_SMOOTHING = False  
-USE_PLOT = False
 
 pd.options.display.max_columns = None
 pd.options.display.max_colwidth = None
@@ -31,67 +36,12 @@ def pad_to_square_center(img):
     return padded
 
 
-# ======================================================
-# FUNÇÃO: Zoom-out até o crop ser >= 120×120
-# ======================================================
-def zoom_out_to_size(img, xmin, ymin, xmax, ymax, target=120):
-    h, w = img.shape[:2]
-
-    bw = xmax - xmin
-    bh = ymax - ymin
-    size = max(bw, bh)
-
-    if size >= target:
-        crop = img[ymin:ymax, xmin:xmax]
-        square = pad_to_square_center(crop)
-        return cv2.resize(square, (target, target))
-
-    needed = target - size
-    pad = needed // 2
-
-    new_xmin = xmin - pad
-    new_ymin = ymin - pad
-    new_xmax = xmax + pad
-    new_ymax = ymax + pad
-
-    while (new_xmax - new_xmin) < target or (new_ymax - new_ymin) < target:
-        new_xmin -= 1
-        new_ymin -= 1
-        new_xmax += 1
-        new_ymax += 1
-
-    pad_left = max(0, -new_xmin)
-    pad_top = max(0, -new_ymin)
-    pad_right = max(0, new_xmax - w)
-    pad_bottom = max(0, new_ymax - h)
-
-    new_xmin = max(0, new_xmin)
-    new_ymin = max(0, new_ymin)
-    new_xmax = min(w, new_xmax)
-    new_ymax = min(h, new_ymax)
-
-    crop = img[new_ymin:new_ymax, new_xmin:new_xmax]
-
-    crop = cv2.copyMakeBorder(
-        crop,
-        pad_top, pad_bottom, pad_left, pad_right,
-        cv2.BORDER_CONSTANT, value=(0, 0, 0)
-    )
-
-    crop_square = pad_to_square_center(crop)
-    crop_final = cv2.resize(crop_square, (target, target))
-
-    return crop_final
-
 
 # ---------------- Inicialização dos modelos ----------------
-Segmentation = YOLO("models/SegARC_v04_lr0.0001_5k/weights/best.pt")
-#Segmentation = YOLO("models/SegARC_v02/weights/best.pt")
+Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
 
 Regressor_Resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\Resnet\resnet_120x120.pth")
-Regressor = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\Resnet\resnet_120x120_2025_12_20_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
-
-Regressor_ViT = None
+Regressor = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\Resnet\unfreeze_last2\resnet_120x120_2026_01_11_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
 
 
 # ---------------- Webcam ----------------
@@ -108,7 +58,6 @@ print("Pressione Q para sair")
 # ======================================================
 smooth_boxes = {}
 alpha = 0.8
-
 
 # ---------------- LOOP PRINCIPAL ----------------
 while True:
@@ -165,11 +114,7 @@ while True:
         if crop.size == 0:
             continue
 
-        if Adjust_Zoom:
-            crop_square = zoom_out_to_size(img_full, xmin, ymin, xmax, ymax, target=120)
-
-        else:
-            crop_square = pad_to_square_center(crop)
+        crop_square = pad_to_square_center(crop)
 
         images_raw.append(crop_square)
         valid_boxes.append((xmin, ymin, xmax, ymax))
@@ -177,21 +122,33 @@ while True:
     # ================= PREDIÇÕES =================
     preds_r1 = []
     preds_vit = []
+    hp_k = []
+    ht_k = []
 
     if len(images_raw) > 0:
         preds_r1 = Regressor.predict(images_raw)
         preds_resnet = Regressor_Resnet.predict(images_raw)
+
+        hp = preds_r1
+        delta = 0.1 # 1mm de espessura do acrílico em cm
+        M = 150 # 150 cm
+        alpha = np.arctan((M - hp)/d)
+        gama = np.arcsin(n_air/n_m * np.sin(alpha))
+        delta_h = delta * np.tan(gama)
+        ht = hp - delta_h
 
     # ================= DESENHO =================
     for k, (xmin, ymin, xmax, ymax) in enumerate(valid_boxes):
         bw = xmax - xmin
         bh = ymax - ymin
 
-        r1_value = float(preds_r1[k]) if len(preds_r1) > k else 0.0
-        resnet_value = float(preds_resnet[k]) if len(preds_resnet) > k else 0.0
-        vit_value = float(preds_vit[k]) if len(preds_vit) > k else 0.0
+        hp_k = float(hp[k])
+        ht_k = float(ht[k])
 
-        label = f"RES:{resnet_value:.1f} | RES-RETRAINED:{r1_value:.1f} | {bw}x{bh}"
+        r1_value = float(preds_r1[k])
+        resnet_value = float(preds_resnet[k])
+
+        label = f"hp:{hp_k:.1f} | ht:{ht_k:.1f} | {bw}x{bh}"
 
         print(label)
 
@@ -199,39 +156,8 @@ while True:
 
         (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
         cv2.rectangle(frame,(xmin, ymin - text_h - 10),(xmin + text_w, ymin),(0, 0, 0),-1)
-
         cv2.putText(frame, label, (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    # ================= SUBPLOT (3 imagens) =================
-    if USE_PLOT:
-        if len(valid_boxes) > 0:
-            xmin, ymin, xmax, ymax = valid_boxes[0]
-
-            crop_raw = img_full[ymin:ymax, xmin:xmax]
-            crop_raw = pad_to_square_center(crop_raw)
-            crop_zoom = zoom_out_to_size(img_full, xmin, ymin, xmax, ymax, target=224)
-            crop_224 = cv2.resize(crop_raw, (224, 224))
-
-            crop_raw = cv2.cvtColor(crop_raw, cv2.COLOR_BGR2RGB)
-            crop_224 = cv2.cvtColor(crop_224, cv2.COLOR_BGR2RGB)
-            crop_zoom = cv2.cvtColor(crop_zoom, cv2.COLOR_BGR2RGB)
-
-            fig, ax = plt.subplots(1, 3, figsize=(8, 4))
-
-            ax[0].imshow(crop_raw)
-            ax[0].set_title("Crop Original")
-            ax[0].axis("off")
-
-            ax[1].imshow(crop_224)
-            ax[1].set_title("Crop pad 224x224")
-            ax[1].axis("off")
-
-            ax[2].imshow(crop_zoom)
-            ax[2].set_title("Crop Zoom 224x224")
-            ax[2].axis("off")
-
-            plt.show(block=True)
-            plt.close(fig)
 
     # ================= OpenCV window =================
     cv2.imshow("Webcam - Altura Estimada", frame)
