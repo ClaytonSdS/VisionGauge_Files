@@ -130,9 +130,13 @@ class PredictionCache:
 # ======================================================
 # MODELOS
 # ======================================================
-Segmentation = YOLO("models/SegARC_v04_lr0.0001_5k/weights/best.pt")
+output_dir = r"dataset\testing"
+os.makedirs(output_dir, exist_ok=True)
 
-Regressor_Resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\resnet\unfreeze_last2\resnet_120x120_2026_01_11_HashSplit_Unfreeze_NoHead_ADAMW_retrained.pth")
+
+Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
+Regressor_Resnet = NDM("mobilenetv3_large").load_model(r"C:\Users\Clayton\Desktop\MODELS\mobilenet_v3\LARGE_L3_H0\MobileNetV3_Large_120x120_2.pth")
+save_path = os.path.join(output_dir, "MobileNetV3_TESTE2_Predictions.csv")
 
 # ======================================================
 # PIPELINE
@@ -234,8 +238,6 @@ for i in range(0, len(paths), BATCH_SIZE):
 # ======================================================
 # SALVAR CSV
 # ======================================================
-output_dir = r"dataset\testing"
-os.makedirs(output_dir, exist_ok=True)
 
 df_localizer["abs_error"] = abs(
     df_localizer["pred_height_cm"] - df_localizer["true_height_cm"]
@@ -248,7 +250,7 @@ df_localizer["relative_error_pct"] = (
     df_localizer["signed_error"] / df_localizer["true_height_cm"]
 ) * 100
 
-save_path = os.path.join(output_dir, "resnet_predictions.csv")
+
 df_localizer.to_csv(save_path, index=False)
 
 print(f"\n✅ Dataset salvo em: {save_path}")

@@ -161,6 +161,32 @@ class NewDirectModel_Inference(nn.Module):
 
             self.backbone = m
 
+        elif name in ("mobilenetv3_large", "mobilenet_v3_large"):
+                m = models.mobilenet_v3_large(weights=None)
+                out_feats = m.classifier[3].in_features
+            
+                # Usar head MLP para regressão
+                if self.use_head:
+                    m.classifier[3] = nn.Identity()
+                    self.build_head(out_feats)
+
+                else:
+                    m.classifier[3] = nn.Linear(out_feats, 1)
+                self.backbone = m
+
+        elif name in ("mobilenetv3_small"):
+                m = models.mobilenet_v3_small(weights=None)
+                out_feats = m.classifier[3].in_features
+            
+                # Usar head MLP para regressão
+                if self.use_head:
+                    m.classifier[3] = nn.Identity()
+                    self.build_head(out_feats)
+
+                else:
+                    m.classifier[3] = nn.Linear(out_feats, 1)
+                self.backbone = m
+
         else:
             raise ValueError(f"Backbone '{self.model_name}' inválido.")
 
