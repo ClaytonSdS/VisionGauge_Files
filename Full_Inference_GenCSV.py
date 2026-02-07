@@ -135,8 +135,8 @@ os.makedirs(output_dir, exist_ok=True)
 
 
 Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
-Regressor = NDM("efficientnet_b0").load_model(r"C:\Users\Clayton\Desktop\MODELS\EfficientNet-B0_120x120.pth")
-save_path = os.path.join(output_dir, "EfficientNet-B0_Predictions.csv")
+Regressor = NDM("mobilenetv3_small").load_model(r"C:\Users\Clayton\Desktop\MODELS\MobileNetV3_Small_120x120.pth")
+save_path = os.path.join(output_dir, "MobileNetV3_Small_Predictions.csv")
 
 # ======================================================
 # PIPELINE
