@@ -28,14 +28,9 @@ def pad_to_square_center(img):
     padded[y_off:y_off + h, x_off:x_off + w] = img
     return padded
 
-
-
 # ---------------- Inicialização dos modelos ----------------
 Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
-
 Regressor = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth")
-#Regressor_effnetv3 = NDM("efficientnet_b0").load_model(r"C:\Users\Clayton\Desktop\MODELS\efficientnet_b0\EfficientNet-B0_120x120.pth")
-
 
 # ---------------- Webcam ----------------
 cap = cv2.VideoCapture(0)
@@ -94,43 +89,35 @@ while True:
 
     # ================= PREDIÇÕES =================
     preds_r1 = []
-    preds_vit = []
-    hp_k = []
-    ht_k = []
 
     if len(images_raw) > 0:
         preds_r1 = Regressor.predict(images_raw)
-
-        hp = preds_r1
-
-        # ===================================================================
-        # Parallax Parameters
-        n_air = 1.000293 # índice de refração do ar
-        n_m = 1.53 # índice de refração do acrílico
-        t = 0.1 # espessura do acrílico em cm 1mm
-        d = 26 # distância entre o objeto e a lente em cm
-
-        delta = 0.1 # 1mm de espessura do acrílico em cm
-        M = 150 # 150 cm
-        alpha = np.arctan((M - hp)/d)
-        gama = np.arcsin(n_air/n_m * np.sin(alpha))
-        delta_h = delta * np.tan(gama)
-        ht = hp - delta_h
-        # ===================================================================
 
     # ================= DESENHO =================
     for k, (xmin, ymin, xmax, ymax) in enumerate(valid_boxes):
         bw = xmax - xmin
         bh = ymax - ymin
 
-        hp_k = float(hp[k])
-        ht_k = float(ht[k])
+        h_p = float(preds_r1[k]) # altura manometrica prevista pelo modelo
 
-        r1_value = float(preds_r1[k])
+        # ===================================================================
+        # Parallax Parameters
+        n_air = 1.000293 # índice de refração do ar
+        n_mangueira = 1.53 # índice de refração do acrílico
+        epislon  = 0.1 # espessura do acrílico em cm => 1mm
+        d = 28 # distância entre o objeto e a lente em cm
+        h_c = 22 # altura do centro da lente em relação ao chão
 
-        label = f"hp:{hp_k:.1f} | ht:{ht_k:.1f} | {bw}x{bh}"
+        # Cálculo do alpha
+        alpha = np.arctan(d/(h_c - h_p))
+        beta =  np.arcsin(n_air/n_mangueira * np.sin(alpha))
+        delta = abs(epislon * np.tan(beta))
+        h_t = h_p - delta
+        # ===================================================================
 
-        print(label)
+        label = f"hp:{h_p:.2f} | ht:{h_t:.2f} | {bw}x{bh}"
+
+        print(f"{label} | alpha: {np.degrees(alpha):.2f}° | beta: {np.degrees(beta):.2f}° | deltah = {delta:.2f}cm")
 
         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
@@ -149,4 +136,3 @@ while True:
 # ================= Cleanup =================
 cap.release()
 cv2.destroyAllWindows()
-q
