@@ -98,6 +98,8 @@ while True:
         bw = xmax - xmin
         bh = ymax - ymin
 
+
+
         h_p = float(preds_r1[k]) # altura manometrica prevista pelo modelo
 
         # ===================================================================
@@ -105,19 +107,36 @@ while True:
         n_air = 1.000293 # índice de refração do ar
         n_mangueira = 1.53 # índice de refração do acrílico
         epislon  = 0.1 # espessura do acrílico em cm => 1mm
-        d = 28 # distância entre o objeto e a lente em cm
+        d = 29.5 # distância entre o objeto e a lente em cm
         h_c = 22 # altura do centro da lente em relação ao chão
 
+        def delta(L, d):
+            alpha = np.arctan(L / d)
+            beta =  np.arcsin(n_air/n_mangueira * np.sin(alpha))
+
+            return epislon * np.tan(beta)
+
         # Cálculo do alpha
-        alpha = np.arctan(d/(h_c - h_p))
-        beta =  np.arcsin(n_air/n_mangueira * np.sin(alpha))
-        delta = abs(epislon * np.tan(beta))
-        h_t = h_p - delta
+        delta_ = delta(L=h_p, d=d)
+        h_t = h_p - abs(delta_)
+
+        y = frame.shape[0]
+        densidade_pixel = h_p / (ymax - ymin)
+        l1 = densidade_pixel * ymin
+        delta1 = abs(delta(L=l1, d=d))
+
+
+        densidade_pixel2 = h_p / (640 - ymin)
+        l2 = densidade_pixel2 * ymin
+        delta2 = abs(delta(L=l2, d=d))
+
+
         # ===================================================================
 
         label = f"hp:{h_p:.2f} | ht:{h_t:.2f} | {bw}x{bh}"
 
-        print(f"{label} | alpha: {np.degrees(alpha):.2f}° | beta: {np.degrees(beta):.2f}° | deltah = {delta:.2f}cm")
+        print(f"{label}  deltah = {delta_:.2f}cm |, delta1 = {delta1:.2f}cm | delta2 = {delta2:.2f}cm |",
+              f"y_min = {ymin} | y_max = {ymax} | y = {y} | d1 = {densidade_pixel:.4f} cm/pixel | d2 = {densidade_pixel2:.4f} cm/pixel | l1 = {l1:.2f} cm | l2 = {l2:.2f} cm")
 
         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
 
