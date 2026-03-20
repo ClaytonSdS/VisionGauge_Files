@@ -5,8 +5,10 @@ import torch
 import pandas as pd
 from collections import OrderedDict
 from Arch import NewDirectModel_Inference as NDM
+from Arch import NewDirectModel
 import os
 import gc
+import time
 
 pd.options.display.max_columns = None
 pd.options.display.max_colwidth = None
@@ -133,10 +135,38 @@ class PredictionCache:
 output_dir = r"dataset\testing"
 os.makedirs(output_dir, exist_ok=True)
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
+Transform = A.Compose([
+            A.Resize(120, 120),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
 
 Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
-Regressor = NDM("mobilenetv3_small").load_model(r"C:\Users\Clayton\Desktop\MODELS\MobileNetV3_Small_120x120.pth")
-save_path = os.path.join(output_dir, "MobileNetV3_Small_Predictions.csv")
+
+# Regressor
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+#Regressor = NDM(backbone_name="resnet")
+#path = r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth"
+#Regressor.load_model(path)
+
+
+Regressor = torch.load(r"C:\Users\Clayton\Desktop\MODELS\model.pth",map_location=device,weights_only=False)
+Regressor.to(device)
+Regressor.eval()
+
+total_params = sum(p.numel() for p in Regressor.parameters())
+trainable_params = sum(p.numel() for p in Regressor.parameters() if p.requires_grad)
+
+print("Total parameters:", total_params)
+print("Trainable parameters:", trainable_params)
+
+save_path = os.path.join(output_dir, "ResNet_18_Prunned.csv")
 
 # ======================================================
 # PIPELINE
@@ -147,9 +177,9 @@ paths = dataframe["file"].tolist()
 df_localizer = pd.DataFrame(columns=[
     "path", "variation",
     "pred_height_cm", "true_height_cm",
-    "n_boxes"
+    "n_boxes",
+    "regressor_inference_time_ms"
 ])
-
 image_cache = ImageCache()
 crop_cache = CropCache()
 prediction_cache = PredictionCache()
@@ -193,6 +223,7 @@ for i in range(0, len(paths), BATCH_SIZE):
         # CROPS
         # -------------------------------------------------
         preds = []
+        regressor_time = 0
 
         for b in range(n_boxes):
             xmin, ymin, xmax, ymax = boxes[b].astype(int)
@@ -203,11 +234,22 @@ for i in range(0, len(paths), BATCH_SIZE):
                 Adjust_Zoom
             )
 
+            start = time.perf_counter()
+
             pred = prediction_cache.get(
                 model_name="resnet",
                 crop=crop,
-                predict_fn=lambda x: float(Regressor.predict([x])[0])
+                predict_fn=lambda x: float(
+    Regressor(
+        Transform(image=x)["image"]
+        .unsqueeze(0)
+        .to(device)
+    ).detach().cpu().numpy()[0][0]
+)
             )
+            end = time.perf_counter()
+            regressor_time += (end - start)
+
             preds.append(pred)
 
         # -------------------------------------------------
@@ -216,12 +258,13 @@ for i in range(0, len(paths), BATCH_SIZE):
         pred_final = float(np.mean(preds))
 
         df_localizer.loc[len(df_localizer)] = {
-            "path": path,
-            "variation": variation,
-            "pred_height_cm": pred_final,
-            "true_height_cm": true_label,
-            "n_boxes": n_boxes
-        }
+    "path": path,
+    "variation": variation,
+    "pred_height_cm": pred_final,
+    "true_height_cm": true_label,
+    "n_boxes": n_boxes,
+    "regressor_inference_time_ms": regressor_time * 1000
+}
 
         print(
             f"Image {paths_count + 1}/{len(paths)} - "
@@ -252,6 +295,12 @@ df_localizer["relative_error_pct"] = (
 
 
 df_localizer.to_csv(save_path, index=False)
+
+print(
+    "Tempo médio do regressor:",
+    df_localizer["regressor_inference_time_ms"].mean(),
+    "ms"
+)
 
 print(f"\n✅ Dataset salvo em: {save_path}")
 print(f"Imagens processadas com detecção: {len(df_localizer)}")

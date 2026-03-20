@@ -19,8 +19,30 @@ def pad_to_square_center(img):
 
 # ================= MODELOS =================
 Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
+import torch
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
-Regressor_resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth")
+Transform = A.Compose([
+            A.Resize(120, 120),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
+#Regressor_resnet = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth")
+# Regressor
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+#Regressor = NDM(backbone_name="resnet")
+#path = r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth"
+#Regressor.load_model(path)
+
+
+Regressor = torch.load(r"C:\Users\Clayton\Desktop\MODELS\model.pth",map_location=device,weights_only=False)
+Regressor.to(device)
+Regressor.eval()
+
 Regressor_efficient = NDM("efficientnet_lite").load_model(r"C:\Users\Clayton\Desktop\MODELS\EfficientNet-B0_120x120.pth")
 Regressor_mobilev3small = NDM("mobilenetv3_small").load_model(r"C:\Users\Clayton\Desktop\MODELS\MobileNetV3_Large_120x120.pth")
 Regressor_mobilev3large = NDM("mobilenetv3_large").load_model(r"C:\Users\Clayton\Desktop\MODELS\MobileNetV3_Large_120x120.pth")
@@ -81,7 +103,17 @@ while True:
 
     # ================= REGRESSORES =================
     if len(images_raw) > 0:
-        pred_resnet = Regressor_resnet.predict(images_raw)
+        tensors = [Transform(image=img)["image"]
+                    for img in images_raw]
+
+        batch = torch.stack(tensors).to(device)
+
+        with torch.no_grad():
+            preds = Regressor(batch)
+
+        pred_resnet = preds.detach().cpu().numpy().flatten().tolist()
+                    
+        #pred_resnet = Regressor_resnet.predict(images_raw)
         pred_efficient = Regressor_efficient.predict(images_raw)
         pred_mob_small = Regressor_mobilev3small.predict(images_raw)
         pred_mob_large = Regressor_mobilev3large.predict(images_raw)

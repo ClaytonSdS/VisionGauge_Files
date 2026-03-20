@@ -1,0 +1,9 @@
+mlflow
+torch
+torchvision
+torch_pruning
+tqdm
+databricks
+databricks-sdk
+pandas
+albumentations

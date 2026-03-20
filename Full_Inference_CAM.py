@@ -6,7 +6,8 @@ import pandas as pd
 from Arch import NewDirectModel_Inference as NDM
 import time
 import matplotlib.pyplot as plt
-
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 
 # ================= CONFIG =================
@@ -28,13 +29,24 @@ def pad_to_square_center(img):
     padded[y_off:y_off + h, x_off:x_off + w] = img
     return padded
 
+
+Transform = A.Compose([
+            A.Resize(120, 120),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2(),
+        ])
+
 # ---------------- Inicialização dos modelos ----------------
 Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
-Regressor = NDM("resnet").load_model(r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+Regressor = torch.load(r"C:\Users\Clayton\Desktop\MODELS\model.pth",map_location=device,weights_only=False)
+Regressor.to(device)
+Regressor.eval()
 
 # ---------------- Webcam ----------------
 cap = cv2.VideoCapture(0)
-cap = cv2.VideoCapture("http://192.168.2.117:8080/video")
+#cap = cv2.VideoCapture("http://192.168.2.117:8080/video")
 
 if not cap.isOpened():
     raise RuntimeError("Não foi possível acessar a webcam")
@@ -91,7 +103,19 @@ while True:
     preds_r1 = []
 
     if len(images_raw) > 0:
-        preds_r1 = Regressor.predict(images_raw)
+        #preds_r1 = Regressor.predict(images_raw)
+
+        for img in images_raw:
+
+            tensor = Transform(image=img)["image"].unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                pred = Regressor(tensor)
+
+            pred = pred.detach().cpu().numpy()[0][0]
+
+            preds_r1.append(pred)
+            
 
     # ================= DESENHO =================
     for k, (xmin, ymin, xmax, ymax) in enumerate(valid_boxes):
