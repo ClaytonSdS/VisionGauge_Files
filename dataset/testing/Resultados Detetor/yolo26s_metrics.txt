@@ -1,0 +1,23 @@
+YOLO - Avaliacao por CSV (coluna file) [yolo26s]
+model_path: C:\Users\Clayton\Desktop\VisionGauge_Files\models\Yolo_v26s\weights\best.pt
+csv_path: C:\Users\Clayton\Desktop\VisionGauge_Files\dataset\testing\dataset_testing_paths.csv
+
+Matriz de Confusao (linhas=Previsto, colunas=Verdadeiro)
+TP: 902
+FN: 2
+FP: 28
+TN: 0
+
+Metricas principais
+precision: 0.969892
+recall: 0.997788
+accuracy: 0.967811
+f1_score: 0.983642
+
+Metricas complementares por imagem
+image_detection_rate: 0.997788
+image_strict_accuracy_(1_box): 0.970133
+
+Observacao:
+- O CSV contem apenas imagens positivas (com objeto).
+- Por isso TN tende a 0. FP representa caixas extras alem de 1 por imagem.

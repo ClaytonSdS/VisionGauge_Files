@@ -151,11 +151,6 @@ Segmentation = YOLO("models/SegARC_v08/weights/best.pt")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-#Regressor = NDM(backbone_name="resnet")
-#path = r"C:\Users\Clayton\Desktop\MODELS\ResNet-18_120x120.pth"
-#Regressor.load_model(path)
-
-
 Regressor = torch.load(r"C:\Users\Clayton\Desktop\MODELS\model.pth",map_location=device,weights_only=False)
 Regressor.to(device)
 Regressor.eval()

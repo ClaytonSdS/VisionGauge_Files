@@ -1,0 +1,8 @@
+Model: C:\Users\Clayton\Desktop\VisionGauge_Files\models\Yolo_v26s\weights\best.pt
+Data:  C:\Users\Clayton\Desktop\VisionGauge_Files\dataset\UTM_TEST_DETECTION.v1-utm_detection_test_set.yolov5pytorch\data.yaml
+imgsz=640  conf=0.35  iou=0.5
+
+Precision (B): 0.998893
+Recall    (B): 0.997781
+mAP50     (B): 0.995000
+mAP50-95  (B): 0.664733

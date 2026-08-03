@@ -1,0 +1,23 @@
+YOLO - Avaliacao por CSV (coluna file) [yolov8s]
+model_path: C:\Users\Clayton\Desktop\VisionGauge_Files\models\Yolo_v8\weights\best.pt
+csv_path: C:\Users\Clayton\Desktop\VisionGauge_Files\dataset\testing\dataset_testing_paths.csv
+
+Matriz de Confusao (linhas=Previsto, colunas=Verdadeiro)
+TP: 903
+FN: 1
+FP: 0
+TN: 0
+
+Metricas principais
+precision: 1.000000
+recall: 0.998894
+accuracy: 0.998894
+f1_score: 0.999447
+
+Metricas complementares por imagem
+image_detection_rate: 0.998894
+image_strict_accuracy_(1_box): 0.889381
+
+Observacao:
+- O CSV contem apenas imagens positivas (com objeto).
+- Por isso TN e FP sao 0 neste protocolo simplificado.
